@@ -2,24 +2,17 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlmodel import Field, Session, SQLModel, create_engine, select
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class Mensaje(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     rol: str
     texto: str
-    fecha: datetime = Field(default_factory=datetime.utcnow)
-
-    # {
-    #     "name": "Alejandro",
-    #     "age": 90,
-    #     "secret_name": "agohuertas"
-
-    # }
+    fecha: str
 
 
-sqlite_file_name = "database.db"
+sqlite_file_name = "chatbot.db"
 sqlite_url = f"sqlite:///{sqlite_file_name}"
 
 connect_args = {"check_same_thread": False}
@@ -45,15 +38,28 @@ def on_startup():
     create_db_and_tables()
 
 
-# Endpoint de creación de heroes
-@app.post("/heroes/")
-def create_hero(hero: Hero, session: SessionDep) -> Hero:
-    session.add(hero)
+# Endpoint de creación de mensajes
+@app.post("/mensajes/")
+def crear_mensaje(mensaje: Mensaje, session: SessionDep) -> Mensaje:
+    session.add(mensaje)
     session.commit()
-    session.refresh(hero)
-    return hero
+    session.refresh(mensaje)
+    return mensaje
+
+# Code above omitted 👆
+
+@app.get("/mensajes/")
+def leer_mensajes(
+    session: SessionDep,
+    offset: int = 0,
+    limit: Annotated[int, Query(le=100)] = 100,
+) -> list[Mensaje]:
+    mensajes = session.exec(select(Mensaje).offset(offset).limit(limit)).all()
+    return mensajes
 
 # Code below omitted 👇
+
+
 
 
 
