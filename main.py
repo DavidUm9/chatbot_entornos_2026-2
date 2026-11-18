@@ -21,7 +21,7 @@ historial_de_mensajes = []
 @app.get("/chat/{saludo}")
 def llamar_ia(saludo):
     global historial_de_mensajes
-    texto_historial = "/".join(historial_de_mensajes) 
+    texto_historial = "/".join(historial_de_mensajes)
     print("historial_de_mensajes: ", historial_de_mensajes)
     print("prompt al LLM: ", saludo + " --- Historial de mensajes: " + texto_historial)
     inferencia = client.interactions.create(
