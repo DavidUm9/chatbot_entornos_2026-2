@@ -52,14 +52,24 @@ app.add_middleware(
 
 client = genai.Client()
 
-@app.get("/chat/{saludo}") # cambiar a POST
-def llamar_ia(saludo):
+class MensajeEntrada(SQLModel):
+    texto: str
+
+@app.post("/chat/") # cambiar a POST
+def llamar_ia(mensaje: MensajeEntrada, session: SessionDep):
     # en esta linea deberíamos guardar el mensaje que llega del humano
+    ahora = datetime.now(timezone.utc).isoformat()
+    session.add(Mensaje(rol="usuario", texto=mensaje.texto, fecha=ahora))
     inferencia = client.interactions.create(
         model="gemini-3.1-flash-lite",
-        input=saludo
+        input=mensaje.texto
     )
     # En esta linea guardamos el mensaje de la IA
+    ahora = datetime.now(timezone.utc).isoformat()
+    respuesta = Mensaje(rol="bot", texto=inferencia.output_text, fecha=ahora)
+    session.add(respuesta)
+    session.commit()
+    session.refresh(respuesta)
     return {"Respuesta": inferencia.output_text }
 
 # va a ser necesario definir un endpoint GET que me permita obtener TODOS los mensajes
