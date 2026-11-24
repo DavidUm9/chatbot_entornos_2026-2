@@ -1,54 +1,170 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
-    <link rel="stylesheet" href="styles.css">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+    <link rel="stylesheet" href="styles.css">
+    <title>Chatbot</title>
 </head>
 <body>
-  <h1 class="clase-titulo">
-    Hola Mundo. Me llamo Alejandro.
-  </h1>
-  <p class="clase-parrafo" id="parrafo-llm">
-    CHATBOT!. 
-  </p>
-  <button id="boton-accionador">
-    ACEPTAR
-  </button>
-  <input type="Ingrese Texto" id="input-prompt">
-  <a href="https://www.google.com">Ir a google.com</a>
-  <img src="" alt="">
-  <script>
-    document.getElementById("boton-accionador").onclick = async () => {
-      const prompt = document.getElementById("input-prompt").value;
-      const res = await fetch("http://localhost:8000/chat/", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ texto: prompt })
-      })
-      const datos = await res.json()
-      const parrafo = document.getElementById("parrafo-llm");
-      parrafo.style.whiteSpace = "pre-wrap";
-      parrafo.textContent += `\nTú: ${prompt}\nIA: ${datos.Respuesta}\n`;
-    }
+  <div class="app">
+  <aside class="sidebar" id="sidebar">
+    <button type="button" id="boton-nueva">+ Nueva conversación</button>
+    <ul id="lista-conversaciones"></ul>
+  </aside>
+  <main class="chat">
+    <header class="chat-header">
+      <button type="button" id="boton-menu" title="Conversaciones">&#9776;</button>
+      <div class="avatar">IA</div>
+      <div>
+        <h1 class="clase-titulo">Chatbot</h1>
+        <span class="estado" id="estado-conversacion">En línea</span>
+      </div>
+    </header>
 
-    const cargarHistorial = async () => {
-      const res = await fetch("http://localhost:8000/mensajes/");
-      const mensajes = await res.json();
-      mensajes.sort((a, b) => a.id - b.id);
-      const parrafo = document.getElementById("parrafo-llm");
-      parrafo.style.whiteSpace = "pre-wrap";
-      mensajes.forEach((m) => {
-        const autor = m.rol === "usuario" ? "Tú" : "IA";
-        parrafo.textContent += `\n${autor}: ${m.texto}\n`;
+    <section class="clase-parrafo" id="parrafo-llm" aria-live="polite">
+    </section>
+
+    <form class="chat-input" id="form-chat" autocomplete="off">
+      <input type="text" id="input-prompt" placeholder="Escribe un mensaje..." required>
+      <button type="submit" id="boton-accionador">Enviar</button>
+    </form>
+  </main>
+  </div>
+  <script>
+    const contenedor = document.getElementById("parrafo-llm");
+    const input = document.getElementById("input-prompt");
+    const boton = document.getElementById("boton-accionador");
+    const API = "http://localhost:8000";
+    const saludo = "¡Hola! Soy tu asistente. ¿En qué puedo ayudarte?";
+    let conversacionId = null;
+
+    const mostrarConversacion = () => {
+      document.getElementById("estado-conversacion").textContent =
+        `En línea · Conversación #${conversacionId}`;
+    };
+
+    const lista = document.getElementById("lista-conversaciones");
+
+    const cargarConversaciones = async () => {
+      const res = await fetch(`${API}/conversaciones`);
+      const convs = await res.json();
+      convs.sort((a, b) => b.id - a.id);
+      lista.innerHTML = "";
+      convs.forEach((c) => {
+        const li = document.createElement("li");
+        li.className = "conversacion" + (c.id === conversacionId ? " activa" : "");
+        li.innerHTML = "<span></span><small></small>";
+        li.children[0].textContent = c.nombre_conversacion;
+        li.children[1].textContent = `#${c.id}`;
+        li.onclick = () => seleccionarConversacion(c.id);
+        lista.appendChild(li);
       });
     };
 
-    cargarHistorial();
+    const seleccionarConversacion = async (id) => {
+      conversacionId = id;
+      localStorage.setItem("conversacion_id", id);
+      mostrarConversacion();
+      document.getElementById("sidebar").classList.remove("abierto");
+      try {
+        await cargarHistorial();
+        await cargarConversaciones();
+        input.focus();
+      } catch (err) {
+        agregarMensaje("ia", "No se pudo cargar la conversación.", "error");
+      }
+    };
 
-    </script>
+    document.getElementById("boton-menu").onclick = () =>
+      document.getElementById("sidebar").classList.toggle("abierto");
+
+    const crearConversacion = async () => {
+      const res = await fetch(`${API}/conversaciones`, { method: "POST" });
+      const conv = await res.json();
+      conversacionId = conv.id;
+      localStorage.setItem("conversacion_id", conversacionId);
+      mostrarConversacion();
+    };
+
+    const agregarMensaje = (autor, texto, clase = "") => {
+      const div = document.createElement("div");
+      div.className = `mensaje ${autor} ${clase}`.trim();
+      div.textContent = texto;
+      contenedor.appendChild(div);
+      contenedor.scrollTop = contenedor.scrollHeight;
+      return div;
+    };
+
+    document.getElementById("form-chat").onsubmit = async (e) => {
+      e.preventDefault();
+      const prompt = input.value.trim();
+      if (!prompt) return;
+      input.value = "";
+      agregarMensaje("usuario", prompt);
+      boton.disabled = true;
+      const pensando = agregarMensaje("ia", "Escribiendo...", "pensando");
+      try {
+        const res = await fetch(`${API}/chat/`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ texto: prompt, conversacion_id: conversacionId })
+        });
+        const datos = await res.json();
+        pensando.classList.remove("pensando");
+        pensando.textContent = datos.Respuesta;
+      } catch (err) {
+        pensando.classList.remove("pensando");
+        pensando.classList.add("error");
+        pensando.textContent = "No se pudo conectar con el servidor.";
+      }
+      boton.disabled = false;
+      input.focus();
+      contenedor.scrollTop = contenedor.scrollHeight;
+    };
+
+    const cargarHistorial = async () => {
+      contenedor.innerHTML = "";
+      const res = await fetch(`${API}/conversaciones/${conversacionId}/mensajes`);
+      const mensajes = await res.json();
+      if (mensajes.length === 0) agregarMensaje("ia", saludo);
+      mensajes.sort((a, b) => a.id - b.id);
+      mensajes.forEach((m) => {
+        agregarMensaje(m.rol === "usuario" ? "usuario" : "ia", m.texto);
+      });
+    };
+
+    document.getElementById("boton-nueva").onclick = async () => {
+      try {
+        await crearConversacion();
+        await cargarHistorial();
+        await cargarConversaciones();
+        document.getElementById("sidebar").classList.remove("abierto");
+        input.focus();
+      } catch (err) {
+        agregarMensaje("ia", "No se pudo crear la conversación.", "error");
+      }
+    };
+
+    const iniciar = async () => {
+      try {
+        const guardado = localStorage.getItem("conversacion_id");
+        if (guardado) {
+          conversacionId = Number(guardado);
+          mostrarConversacion();
+        } else {
+          await crearConversacion();
+        }
+        await cargarHistorial();
+        await cargarConversaciones();
+      } catch (err) {
+        agregarMensaje("ia", "No se pudo conectar con el servidor.", "error");
+      }
+    };
+
+    iniciar();
+  </script>
 </body>
 </html>

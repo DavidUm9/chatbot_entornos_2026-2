@@ -14,6 +14,11 @@ class Mensaje(SQLModel, table=True):
     rol: str
     texto: str
     fecha: str
+    conversacion_id: int | None = Field(default=None, foreign_key="conversacion.id")
+
+class Conversacion(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    nombre_conversacion: str = "Nueva conversación"
 
 sqlite_file_name = "chatbot.db"
 sqlite_url = f"sqlite:///{sqlite_file_name}"
@@ -54,12 +59,25 @@ client = genai.Client()
 
 class MensajeEntrada(SQLModel):
     texto: str
+    conversacion_id: int
+
+@app.get("/conversaciones")
+def listar_conversaciones(session: SessionDep):
+    return session.exec(select(Conversacion).order_by(Conversacion.id.desc())).all()
+
+@app.post("/conversaciones")
+def crear_conversacion(session: SessionDep):
+    conversacion = Conversacion()
+    session.add(conversacion)
+    session.commit()
+    session.refresh(conversacion)
+    return conversacion
 
 @app.post("/chat/") # cambiar a POST
 def llamar_ia(mensaje: MensajeEntrada, session: SessionDep):
     # en esta linea deberíamos guardar el mensaje que llega del humano
     ahora = datetime.now(timezone.utc).isoformat()
-    session.add(Mensaje(rol="usuario", texto=mensaje.texto, fecha=ahora))
+    session.add(Mensaje(rol="usuario", texto=mensaje.texto, fecha=ahora, conversacion_id=mensaje.conversacion_id))
     # Recuperamos el historial desde la base de datos para enviarlo como contexto
     session.flush()
     historial = session.exec(select(Mensaje).order_by(Mensaje.id)).all()
@@ -76,7 +94,7 @@ def llamar_ia(mensaje: MensajeEntrada, session: SessionDep):
     )
     # En esta linea guardamos el mensaje de la IA
     ahora = datetime.now(timezone.utc).isoformat()
-    respuesta = Mensaje(rol="bot", texto=inferencia.output_text, fecha=ahora)
+    respuesta = Mensaje(rol="bot", texto=inferencia.output_text, fecha=ahora, conversacion_id=mensaje.conversacion_id)
     session.add(respuesta)
     session.commit()
     session.refresh(respuesta)
@@ -91,3 +109,12 @@ def leer_mensajes(
 ) -> list[Mensaje]:
     mensajes = session.exec(select(Mensaje).offset(offset).limit(limit)).all()
     return mensajes
+
+@app.get("/conversaciones/{conversacion_id}/mensajes")
+def mensajes_conversacion(conversacion_id: int, session: SessionDep):
+    return session.exec(
+        select(Mensaje).where(Mensaje.conversacion_id == conversacion_id)
+        ).all()
+
+# SELECT * Mensaje
+# WHERE conversacion_id = X
