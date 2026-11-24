@@ -11,7 +11,7 @@
     Hola Mundo. Me llamo Alejandro.
   </h1>
   <p class="clase-parrafo" id="parrafo-llm">
-    Acá va a aparecer el texto que recibimos de nuestro servidor. 
+    CHATBOT!. 
   </p>
   <button id="boton-accionador">
     ACEPTAR
@@ -22,11 +22,33 @@
   <script>
     document.getElementById("boton-accionador").onclick = async () => {
       const prompt = document.getElementById("input-prompt").value;
-      const res = await fetch("http://localhost:8000/chat/"+prompt)
+      const res = await fetch("http://localhost:8000/chat/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ texto: prompt })
+      })
       const datos = await res.json()
-      document.getElementById("parrafo-llm").textContent = datos.Respuesta
+      const parrafo = document.getElementById("parrafo-llm");
+      parrafo.style.whiteSpace = "pre-wrap";
+      parrafo.textContent += `\nTú: ${prompt}\nIA: ${datos.Respuesta}\n`;
     }
-    
+
+    const cargarHistorial = async () => {
+      const res = await fetch("http://localhost:8000/mensajes/");
+      const mensajes = await res.json();
+      mensajes.sort((a, b) => a.id - b.id);
+      const parrafo = document.getElementById("parrafo-llm");
+      parrafo.style.whiteSpace = "pre-wrap";
+      mensajes.forEach((m) => {
+        const autor = m.rol === "usuario" ? "Tú" : "IA";
+        parrafo.textContent += `\n${autor}: ${m.texto}\n`;
+      });
+    };
+
+    cargarHistorial();
+
     </script>
 </body>
 </html>

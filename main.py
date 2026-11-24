@@ -60,9 +60,19 @@ def llamar_ia(mensaje: MensajeEntrada, session: SessionDep):
     # en esta linea deberíamos guardar el mensaje que llega del humano
     ahora = datetime.now(timezone.utc).isoformat()
     session.add(Mensaje(rol="usuario", texto=mensaje.texto, fecha=ahora))
+    # Recuperamos el historial desde la base de datos para enviarlo como contexto
+    session.flush()
+    historial = session.exec(select(Mensaje).order_by(Mensaje.id)).all()
+    steps = [
+        {
+            "type": "user_input" if m.rol == "usuario" else "model_output",
+            "content": [{"type": "text", "text": m.texto}],
+        }
+        for m in historial
+    ]
     inferencia = client.interactions.create(
         model="gemini-3.1-flash-lite",
-        input=mensaje.texto
+        input=steps
     )
     # En esta linea guardamos el mensaje de la IA
     ahora = datetime.now(timezone.utc).isoformat()
