@@ -7,10 +7,27 @@
     <title>Chatbot</title>
 </head>
 <body>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+  <div id="pantalla-login" class="login oculto">
+    <form id="form-login" class="login-caja" autocomplete="on">
+      <h2 id="login-titulo">Iniciar sesión</h2>
+      <input type="text" id="login-nombre" placeholder="Nombre" class="oculto" autocomplete="name">
+      <input type="text" id="login-username" placeholder="Usuario" required autocomplete="username">
+      <input type="password" id="login-password" placeholder="Contraseña" required autocomplete="current-password">
+      <p id="login-error" class="login-error"></p>
+      <button type="submit" id="login-enviar">Entrar</button>
+      <button type="button" id="login-alternar" class="login-link">¿No tienes cuenta? Regístrate</button>
+    </form>
+  </div>
   <div class="app">
   <aside class="sidebar" id="sidebar">
     <button type="button" id="boton-nueva">+ Nueva conversación</button>
     <ul id="lista-conversaciones"></ul>
+    <div class="sidebar-usuario">
+      <span id="nombre-usuario"></span>
+      <button type="button" id="boton-salir">Salir</button>
+    </div>
   </aside>
   <main class="chat">
     <header class="chat-header">
@@ -27,6 +44,7 @@
 
     <form class="chat-input" id="form-chat" autocomplete="off">
       <input type="text" id="input-prompt" placeholder="Escribe un mensaje..." required>
+      <button type="button" id="boton-imagen" title="Generar una imagen con este texto">Imagen</button>
       <button type="submit" id="boton-accionador">Enviar</button>
     </form>
   </main>
@@ -35,31 +53,97 @@
     const contenedor = document.getElementById("parrafo-llm");
     const input = document.getElementById("input-prompt");
     const boton = document.getElementById("boton-accionador");
+    const botonImagen = document.getElementById("boton-imagen");
     const API = "http://localhost:8000";
     const saludo = "¡Hola! Soy tu asistente. ¿En qué puedo ayudarte?";
     let conversacionId = null;
+    let token = localStorage.getItem("token");
+
+    const lista = document.getElementById("lista-conversaciones");
+    const pantallaLogin = document.getElementById("pantalla-login");
+    const mostrarLogin = () => {
+      token = null;
+      conversacionId = null;
+      localStorage.removeItem("token");
+      localStorage.removeItem("conversacion_id");
+      contenedor.innerHTML = "";
+      lista.innerHTML = "";
+      pantallaLogin.classList.remove("oculto");
+    };
+
+    // fetch que agrega el token y vuelve al login si el servidor responde 401
+    const apiFetch = async (url, opciones = {}) => {
+      const headers = { ...(opciones.headers || {}) };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const res = await fetch(url, { ...opciones, headers });
+      if (res.status === 401 && token) {
+        mostrarLogin();
+        throw new Error("Sesión expirada");
+      }
+      return res;
+    };
 
     const mostrarConversacion = () => {
       document.getElementById("estado-conversacion").textContent =
         `En línea · Conversación #${conversacionId}`;
     };
 
-    const lista = document.getElementById("lista-conversaciones");
-
+    
     const cargarConversaciones = async () => {
-      const res = await fetch(`${API}/conversaciones`);
+      const res = await apiFetch(`${API}/conversaciones`);
       const convs = await res.json();
       convs.sort((a, b) => b.id - a.id);
       lista.innerHTML = "";
       convs.forEach((c) => {
         const li = document.createElement("li");
         li.className = "conversacion" + (c.id === conversacionId ? " activa" : "");
-        li.innerHTML = "<span></span><small></small>";
+        li.innerHTML = "<span></span><small></small><button type='button' class='boton-renombrar' title='Cambiar nombre'>&#9998;</button><button type='button' class='boton-renombrar' title='Eliminar'>&#128465;</button>";
         li.children[0].textContent = c.nombre_conversacion;
         li.children[1].textContent = `#${c.id}`;
+        li.children[2].onclick = (e) => {
+          e.stopPropagation();
+          renombrarConversacion(c);
+        };
+        li.children[3].onclick = (e) => {
+          e.stopPropagation();
+          eliminarConversacion(c);
+        };
         li.onclick = () => seleccionarConversacion(c.id);
         lista.appendChild(li);
       });
+    };
+
+    const renombrarConversacion = async (c) => {
+      const nuevo = prompt("Nuevo nombre de la conversación:", c.nombre_conversacion);
+      if (nuevo === null || !nuevo.trim() || nuevo.trim() === c.nombre_conversacion) return;
+      try {
+        const res = await apiFetch(`${API}/conversaciones`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ conversacion_id: c.id, conversacion_name: nuevo.trim() })
+        });
+        if (!res.ok) throw new Error(res.status);
+        await cargarConversaciones();
+      } catch (err) {
+        alert("No se pudo cambiar el nombre.");
+      }
+    };
+
+    const eliminarConversacion = async (c) => {
+      if (!confirm(`¿Eliminar "${c.nombre_conversacion}" y todos sus mensajes?`)) return;
+      try {
+        const res = await apiFetch(`${API}/conversaciones/${c.id}`, { method: "DELETE" });
+        if (!res.ok) throw new Error(res.status);
+        if (c.id === conversacionId) {
+          localStorage.removeItem("conversacion_id");
+          conversacionId = null;
+          await iniciar();
+        } else {
+          await cargarConversaciones();
+        }
+      } catch (err) {
+        alert("No se pudo eliminar la conversación.");
+      }
     };
 
     const seleccionarConversacion = async (id) => {
@@ -80,20 +164,90 @@
       document.getElementById("sidebar").classList.toggle("abierto");
 
     const crearConversacion = async () => {
-      const res = await fetch(`${API}/conversaciones`, { method: "POST" });
+      const res = await apiFetch(`${API}/conversaciones`, { method: "POST" });
       const conv = await res.json();
       conversacionId = conv.id;
       localStorage.setItem("conversacion_id", conversacionId);
       mostrarConversacion();
     };
 
+    const renderizarMarkdown = (div, texto) => {
+      if (window.marked && window.DOMPurify) {
+        div.classList.add("md");
+        div.innerHTML = DOMPurify.sanitize(marked.parse(texto, { breaks: true }));
+        div.querySelectorAll("a").forEach((a) => {
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+        });
+      } else {
+        div.textContent = texto;
+      }
+    };
+
     const agregarMensaje = (autor, texto, clase = "") => {
       const div = document.createElement("div");
       div.className = `mensaje ${autor} ${clase}`.trim();
-      div.textContent = texto;
+      if (autor === "ia" && !clase) renderizarMarkdown(div, texto);
+      else div.textContent = texto;
       contenedor.appendChild(div);
       contenedor.scrollTop = contenedor.scrollHeight;
       return div;
+    };
+
+    const agregarImagen = async (mensajeId, descripcion, div = null) => {
+      div = div || agregarMensaje("ia", "Cargando imagen...", "pensando");
+      try {
+        const res = await apiFetch(`${API}/imagenes/${mensajeId}`);
+        if (!res.ok) throw new Error(res.status);
+        const url = URL.createObjectURL(await res.blob());
+        div.classList.remove("pensando");
+        div.textContent = "";
+        const img = document.createElement("img");
+        img.src = url;
+        img.alt = descripcion;
+        img.className = "imagen-generada";
+        div.appendChild(img);
+      } catch (err) {
+        div.classList.remove("pensando");
+        div.classList.add("error");
+        div.textContent = "No se pudo cargar la imagen.";
+      }
+      contenedor.scrollTop = contenedor.scrollHeight;
+    };
+
+    document.getElementById("boton-imagen").onclick = async () => {
+      const prompt = input.value.trim();
+      if (!prompt) {
+        input.focus();
+        return;
+      }
+      input.value = "";
+      agregarMensaje("usuario", `/imagen ${prompt}`);
+      boton.disabled = true;
+      botonImagen.disabled = true;
+      const pensando = agregarMensaje("ia", "Generando imagen...", "pensando");
+      try {
+        const res = await apiFetch(`${API}/imagen`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ texto: prompt, conversacion_id: conversacionId })
+        });
+        const datos = await res.json();
+        if (!res.ok) {
+          pensando.classList.remove("pensando");
+          pensando.classList.add("error");
+          pensando.textContent = typeof datos.detail === "string" ? datos.detail : "No se pudo generar la imagen.";
+        } else {
+          await agregarImagen(datos.mensaje_id, prompt, pensando);
+        }
+      } catch (err) {
+        pensando.classList.remove("pensando");
+        pensando.classList.add("error");
+        pensando.textContent = "No se pudo conectar con el servidor.";
+      }
+      boton.disabled = false;
+      botonImagen.disabled = false;
+      input.focus();
     };
 
     document.getElementById("form-chat").onsubmit = async (e) => {
@@ -105,7 +259,7 @@
       boton.disabled = true;
       const pensando = agregarMensaje("ia", "Escribiendo...", "pensando");
       try {
-        const res = await fetch(`${API}/chat/`, {
+        const res = await apiFetch(`${API}/chat/`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json"
@@ -114,7 +268,7 @@
         });
         const datos = await res.json();
         pensando.classList.remove("pensando");
-        pensando.textContent = datos.Respuesta;
+        renderizarMarkdown(pensando, datos.Respuesta);
       } catch (err) {
         pensando.classList.remove("pensando");
         pensando.classList.add("error");
@@ -127,12 +281,13 @@
 
     const cargarHistorial = async () => {
       contenedor.innerHTML = "";
-      const res = await fetch(`${API}/conversaciones/${conversacionId}/mensajes`);
+      const res = await apiFetch(`${API}/conversaciones/${conversacionId}/mensajes`);
       const mensajes = await res.json();
       if (mensajes.length === 0) agregarMensaje("ia", saludo);
       mensajes.sort((a, b) => a.id - b.id);
       mensajes.forEach((m) => {
-        agregarMensaje(m.rol === "usuario" ? "usuario" : "ia", m.texto);
+        if (m.tipo === "imagen") agregarImagen(m.id, m.texto);
+        else agregarMensaje(m.rol === "usuario" ? "usuario" : "ia", m.texto);
       });
     };
 
@@ -150,9 +305,17 @@
 
     const iniciar = async () => {
       try {
+        const resMe = await apiFetch(`${API}/me`);
+        const yo = await resMe.json();
+        document.getElementById("nombre-usuario").textContent = yo.nombre;
         const guardado = localStorage.getItem("conversacion_id");
-        if (guardado) {
+        const existentes = await (await apiFetch(`${API}/conversaciones`)).json();
+        if (guardado && existentes.some((c) => c.id === Number(guardado))) {
           conversacionId = Number(guardado);
+          mostrarConversacion();
+        } else if (existentes.length > 0) {
+          conversacionId = existentes[0].id;
+          localStorage.setItem("conversacion_id", conversacionId);
           mostrarConversacion();
         } else {
           await crearConversacion();
@@ -164,7 +327,57 @@
       }
     };
 
-    iniciar();
+    let modoRegistro = false;
+    const alternarModo = () => {
+      modoRegistro = !modoRegistro;
+      document.getElementById("login-titulo").textContent = modoRegistro ? "Crear cuenta" : "Iniciar sesión";
+      document.getElementById("login-enviar").textContent = modoRegistro ? "Registrarme" : "Entrar";
+      document.getElementById("login-alternar").textContent = modoRegistro
+        ? "¿Ya tienes cuenta? Inicia sesión" : "¿No tienes cuenta? Regístrate";
+      document.getElementById("login-nombre").classList.toggle("oculto", !modoRegistro);
+      document.getElementById("login-nombre").required = modoRegistro;
+      document.getElementById("login-error").textContent = "";
+    };
+    document.getElementById("login-alternar").onclick = alternarModo;
+
+    document.getElementById("form-login").onsubmit = async (e) => {
+      e.preventDefault();
+      const error = document.getElementById("login-error");
+      error.textContent = "";
+      const cuerpo = {
+        username: document.getElementById("login-username").value,
+        password: document.getElementById("login-password").value,
+      };
+      if (modoRegistro) cuerpo.nombre = document.getElementById("login-nombre").value;
+      try {
+        const res = await fetch(`${API}/${modoRegistro ? "registro" : "login"}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(cuerpo)
+        });
+        const datos = await res.json();
+        if (!res.ok) {
+          error.textContent = typeof datos.detail === "string" ? datos.detail : "Datos inválidos";
+          return;
+        }
+        token = datos.token;
+        localStorage.setItem("token", token);
+        document.getElementById("form-login").reset();
+        pantallaLogin.classList.add("oculto");
+        await iniciar();
+      } catch (err) {
+        error.textContent = "No se pudo conectar con el servidor.";
+      }
+    };
+
+    document.getElementById("boton-salir").onclick = mostrarLogin;
+
+    const arrancar = async () => {
+      if (!token) return mostrarLogin();
+      await iniciar();
+    };
+
+    arrancar();
   </script>
 </body>
 </html>
