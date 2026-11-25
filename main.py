@@ -18,7 +18,7 @@ class Mensaje(SQLModel, table=True):
 
 class Conversacion(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
-    nombre_conversacion: str = "Nueva conversación"
+    nombre_conversacion: str
 
 sqlite_file_name = "chatbot.db"
 sqlite_url = f"sqlite:///{sqlite_file_name}"
@@ -61,6 +61,10 @@ class MensajeEntrada(SQLModel):
     texto: str
     conversacion_id: int
 
+class ConversacionName(SQLModel):
+    conversacion_id: int
+    conversacion_name: str
+
 @app.get("/conversaciones")
 def listar_conversaciones(session: SessionDep):
     return session.exec(select(Conversacion).order_by(Conversacion.id.desc())).all()
@@ -80,7 +84,7 @@ def llamar_ia(mensaje: MensajeEntrada, session: SessionDep):
     session.add(Mensaje(rol="usuario", texto=mensaje.texto, fecha=ahora, conversacion_id=mensaje.conversacion_id))
     # Recuperamos el historial desde la base de datos para enviarlo como contexto
     session.flush()
-    historial = session.exec(select(Mensaje).order_by(Mensaje.id)).all()
+    historial = session.exec(select(Mensaje).where(Mensaje.conversacion_id == mensaje.conversacion_id).order_by(Mensaje.id)).all()
     steps = [
         {
             "type": "user_input" if m.rol == "usuario" else "model_output",
@@ -115,6 +119,19 @@ def mensajes_conversacion(conversacion_id: int, session: SessionDep):
     return session.exec(
         select(Mensaje).where(Mensaje.conversacion_id == conversacion_id)
         ).all()
+
+@app.patch("/conversaciones")
+def update_conversacion_name(conversacion_name: ConversacionName, session: SessionDep):
+    conversacion_db = session.get(Conversacion, conversacion_name.conversacion_id)
+    if not conversacion_db:
+        raise HTTPException(status_code=404, detail="Conversacion no encontrada")
+    conversacion = Conversacion(conversacion_id=conversacion_name.conversacion_id,conversacion_name=conversacion_name.conversacion_name)
+    conversacion_data = conversacion.model_dump(exclude_unset=True)
+    conversacion_db.sqlmodel_update(conversacion_data)
+    session.add(conversacion_db)
+    session.commit()
+    session.refresh(conversacion_db)
+    return conversacion_db
 
 # SELECT * Mensaje
 # WHERE conversacion_id = X
